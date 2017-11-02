@@ -1,0 +1,198 @@
+#######Load package
+library(RWeka)
+library(caret)
+library(randomForest)
+library(kernlab)
+library(e1071)
+library(corrplot)
+library(C50)
+library(nnet)
+library(GA)
+library(cvTools) 
+library(Metrics)
+library(MASS)
+library(pls)
+library(AUC)
+library(ROCR)
+
+## AtomPairs2DFingerprintCount.csv
+## AtomPairs2DFingerprinter.csv
+## EStateFingerprinter.csv
+## ExtendedFingerprinter.csv
+## Fingerprinter.csv
+## GraphOnlyFingerprinter.csv
+## KlekotaRothFingerprintCount.csv
+## KlekotaRothFingerprinter.csv
+## MACCSFingerprinter.csv
+## PubchemFingerprinter.csv
+## SubstructureFingerprintCount.csv
+## SubstructureFingerprinter.csv
+
+dat = read.csv("Fingerprinter.csv", header = TRUE)
+data = dat[,-1]
+Pos = subset(data, Activity == 'active')
+Neg = subset(data, Activity == 'inactive')
+
+nPos = nrow(Pos)
+nNeg = nrow(Neg)
+
+m= 100
+AUCtr  <- matrix(nrow = m, ncol = 1)
+AUCcv  <- matrix(nrow = m, ncol = 1)
+AUCts  <- matrix(nrow = m, ncol = 1)
+error  <- matrix(nrow = 10, ncol = 1)
+
+for (i in 1:m){
+sample <- c(sample(1:nrow(Neg),32))
+BNeg <- Neg[sample,]
+nBNeg = nrow(BNeg)
+sample1 <- c(sample(1:nPos,24))
+sample2 <- c(sample(1:nBNeg,24 ))
+  train1  <- Pos[sample1,] ####Positive set for training
+  train2  <- BNeg[sample2,] ####Negative set for training
+  test1 <-   Pos[-sample1,]    ####Positive set for testing
+  test2 <-   BNeg[-sample2,]    ####Negative set for testing 
+  internal <- rbind(train1,train2) ####combining for internal set
+  external <- rbind(test1,test2)    ####combining for external set
+  
+######### Optimized parameter
+model <- tuneRF(internal[,-ncol(internal)], internal[,ncol(internal)], stepFactor=1.5)
+index <- c(100,200,300,400,500,600,700,800,900,1000)
+for(p in 1:10){
+ntree <- randomForest(Activity  ~ ., internal, ntree= index[p],mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE)
+error[p,] <- sum(ntree $ confusion[,3])
+}
+ntr = cbind(c(1:10),error)
+ntr2 = ntr[order(ntr[,2]),][1]
+################### Internal validation
+RF = randomForest(Activity ~ ., internal, ntree= index[ntr2],mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE) ## Building RF on internal with the optimized parameter
+predictions=predict(RF, internal,type = "prob")
+pred=prediction(predictions[,2],internal[,ncol(internal)])
+perf_AUC=performance(pred,"auc") #Calculate the AUC value
+AUCtr[i,] = perf_AUC@y.values[[1]]
+
+######Loop for 5-fold CV
+k <- 5;
+folds <- cvsegments(nrow(internal), k);
+true <- data.frame()
+label <- data.frame()
+
+for (fold in 1:k){
+  currentFold <- folds[fold][[1]];
+  RF = randomForest(Activity ~ ., internal[-currentFold,], ntree= index[ntr2] ,mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE) ## Building RF model
+  true = rbind(true, predict(RF, internal[currentFold,],type="prob")[,2])
+  label = rbind(label, internal[currentFold,]$Activity)
+}
+prob = melt(true)
+actual = melt(label)
+pred=prediction(prob[,2],actual[,2])
+perf_AUC=performance(pred,"auc") #Calculate the AUC value
+AUCcv[i,] = perf_AUC@y.values[[1]]
+
+################### External validation
+RF = randomForest(Activity ~ ., internal, ntree= index[ntr2],mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE) ## Building RF on internal with the optimized parameter
+predictions=predict(RF, external,type = "prob")
+pred=prediction(predictions[,2],external[,ncol(external)])
+perf_AUC=performance(pred,"auc") #Calculate the AUC value
+AUCts[i,] = perf_AUC@y.values[[1]]
+}
+resultAUC = data.frame(AUCcv,AUCts)
+average  <- matrix(nrow = 2, ncol = 1)
+std  <- matrix(nrow = 2, ncol = 1)
+
+for (i in 1:2){
+average[i,] = mean(resultAUC[,i])
+std[i,] = sd(resultAUC[,i])
+}
+finalRE = cbind(average,std)
+
+write.csv(finalRE, "RF_AUC_Fingerprinter.csv", row.names=TRUE, na="")
+
+################### Independent
+
+internal = read.csv("IDA-TT-analysis.csv", header = TRUE)
+external = read.csv("Independent-data.csv", header = TRUE)
+error  <- matrix(nrow = 10, ncol = 1)
+
+model <- tuneRF(internal[,-ncol(internal)], internal[,ncol(internal)], stepFactor=1.5)
+index <- c(100,200,300,400,500,600,700,800,900,1000)
+for(p in 1:10){
+ntree <- randomForest(Activity  ~ ., internal, ntree= index[p],mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE)
+error[p,] <- sum(ntree $ confusion[,3])
+}
+ntr = cbind(c(1:10),error)
+ntr2 = ntr[order(ntr[,2]),][1]
+
+RF = randomForest(Activity ~ ., internal, ntree= index[ntr2],mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE) ## Building RF on internal with the optimized parameter
+predictions=predict(RF, external,type = "prob")
+pred=prediction(predictions[,2],external[,ncol(external)])
+perf_AUC=performance(pred,"auc") #Calculate the AUC value
+perf_AUC@y.values[[1]]
+
+
+################### Preparing data for ROC curve
+dat = read.csv("Fingerprinter.csv", header = TRUE)
+data = dat[,-1]
+Pos = subset(data, Activity == 'active')
+Neg = subset(data, Activity == 'inactive')
+
+nPos = nrow(Pos)
+nNeg = nrow(Neg)
+
+m= 100
+AUCtr  <- matrix(nrow = m, ncol = 1)
+AUCcv  <- matrix(nrow = m, ncol = 1)
+AUCts  <- matrix(nrow = m, ncol = 1)
+error  <- matrix(nrow = 10, ncol = 1)
+
+for (i in 1:m){
+sample <- c(sample(1:nrow(Neg),32))
+BNeg <- Neg[sample,]
+nBNeg = nrow(BNeg)
+sample1 <- c(sample(1:nPos,24))
+sample2 <- c(sample(1:nBNeg,24 ))
+  train1  <- Pos[sample1,] ####Positive set for training
+  train2  <- BNeg[sample2,] ####Negative set for training
+  test1 <-   Pos[-sample1,]    ####Positive set for testing
+  test2 <-   BNeg[-sample2,]    ####Negative set for testing 
+  internal <- rbind(train1,train2) ####combining for internal set
+  external <- rbind(test1,test2)    ####combining for external set
+  
+######### Optimized parameter
+model <- tuneRF(internal[,-ncol(internal)], internal[,ncol(internal)], stepFactor=1.5)
+index <- c(100,200,300,400,500,600,700,800,900,1000)
+for(p in 1:10){
+ntree <- randomForest(Activity  ~ ., internal, ntree= index[p],mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE)
+error[p,] <- sum(ntree $ confusion[,3])
+}
+ntr = cbind(c(1:10),error)
+ntr2 = ntr[order(ntr[,2]),][1]
+######Loop for 10-fold CV
+k <- 5;
+folds <- cvsegments(nrow(internal), k);
+true <- data.frame()
+label <- data.frame()
+
+for (fold in 1:k){
+  currentFold <- folds[fold][[1]];
+  RF = randomForest(Activity ~ ., internal[-currentFold,], ntree= index[ntr2] ,mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE) ## Building RF model
+  true = rbind(true, predict(RF, internal[currentFold,],type="prob")[,2])
+  label = rbind(label, internal[currentFold,]$Activity)
+  }
+probcv[,i] = data.frame(melt(true)[,2])[,1]
+write.csv(as.matrix(melt(label)$value), "matrix.csv", row.names=TRUE, na="")
+label = read.csv("matrix.csv", header = TRUE)
+labelcv[,i] = label[,2]
+
+################### External validation
+RF = randomForest(Activity ~ ., internal, ntree= index[ntr2],mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE) ## Building RF on internal with the optimized parameter
+probext[,i] = predict(RF, external,type = "prob")[,2]
+labelext[,i] = external$Activity
+}
+
+RF_auc_cv = cbind(probcv,labelcv)
+RF_auc_ext= cbind(probext,labelext)
+
+write.csv(RF_auc_cv, "RF_auc_Fingerprinter_cv plot.csv", row.names=TRUE, na="")
+write.csv(RF_auc_ext, "RF_auc_Fingerprinter_ext plot.csv", row.names=TRUE, na="")
+
