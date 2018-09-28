@@ -1,17 +1,18 @@
 #######Load package
-library(RWeka)
+#library(RWeka)
 library(caret)
 library(randomForest)
-library(kernlab)
-library(e1071)
-library(corrplot)
-library(C50)
-library(nnet)
-library(GA)
+#library(kernlab)
+#library(e1071)
+#library(corrplot)
+#library(C50)
+#library(nnet)
+#library(GA)
 library(cvTools) 
-library(Metrics)
-library(MASS)
-library(pls)
+#library(Metrics)
+#library(MASS)
+#library(pls)
+
 ## AtomPairs2DFingerprintCount.csv
 ## AtomPairs2DFingerprinter.csv
 ## EStateFingerprinter.csv
@@ -88,7 +89,7 @@ for (i in 1:m){
     currentFold <- folds[fold][[1]];
     RF = randomForest(Activity ~ ., internal[-currentFold,], ntree= index[ntr2] ,mtry = model[order(model[,2]),][1],orm.votes=TRUE,keep.forest=TRUE, importance=TRUE) ## Building RF model
     pred = predict(RF, internal[currentFold,])
-    Result5cv <- Resultcv + table(true=internal[currentFold,]$Activity, pred=pred);   
+    Result5cv <- Result5cv + table(true=internal[currentFold,]$Activity, pred=pred);   
   }
   
   ################### External validation
